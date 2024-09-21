@@ -3,25 +3,28 @@ import shutil
 import logging
 from datetime import datetime
 from csv_parser import parse_daily_tracker_csv
+from supabase import create_client, Client
 
 EXPORT_DIR = os.getenv('DAILY_TRACKER_EXPORT_DIR')
 PROCESSED_DIR = os.path.join(EXPORT_DIR, 'processed')
 LAST_UPDATE_FILE = os.path.join(EXPORT_DIR, "last_update.txt")
 LOG_DIR = os.getenv('DAILY_TRACKER_LOG_DIR')
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 required_vars = ['DAILY_TRACKER_EXPORT_DIR', 'DAILY_TRACKER_LOG_DIR']
 missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars:
     raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-# Ensure the processed directory exists
 if not os.path.exists(PROCESSED_DIR):
     os.makedirs(PROCESSED_DIR)
 
-# Set up logging configuration
 logging.basicConfig(
-    filename=os.path.join(LOG_DIR, 'timetracker.log'), 
-    level=logging.INFO,  # Set to DEBUG to capture all types of logs
+    filename=os.path.join(LOG_DIR, 'daily-data-uploader.log'), 
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -30,13 +33,11 @@ def get_last_update_time():
             with open(LAST_UPDATE_FILE, 'r') as f:
                 return datetime.fromisoformat(f.read().strip())
         else:
-            # If the file doesn't exist, create it with the current time
             current_time = datetime.now()
             set_last_update_time(current_time)
             return current_time
         
 def set_last_update_time(dt):
-    # Ensure the directory exists
     os.makedirs(os.path.dirname(LAST_UPDATE_FILE), exist_ok=True)
     with open(LAST_UPDATE_FILE, 'w') as f:
         f.write(dt.isoformat())
@@ -54,29 +55,43 @@ def process_file(filename):
         logging.info(f"Successfully processed and moved file: {filename}")
     except Exception as e:
         logging.error(f"Error processing file {filename}: {str(e)}")
-    
+
+def get_or_create_group(group_name):
+    result = supabase.table('groups').select('id').eq('name', group_name).execute()
+    if result.data:
+        return result.data[0]['id']
+    else:
+        result = supabase.table('groups').insert({'name': group_name}).execute()
+        return result.data[0]['id']
+
+
 def update_supabase(data):
-    logging.info("Updating Supabase (dry)")
+    logging.info("Updating Supabase")
     try:
-          # Placeholder for Supabase update logic
-          for date, activities in data.items():
-              for activity, details in activities.items():
-                  logging.info(f"Would update: {date} - {activity}: {details}")
-          
-          # Example of how you might use the Supabase client:
-          # existing_data = supabase.table('time_tracking').select('*').execute()
-          # for date, activities in data.items():
-          #     for activity, details in activities.items():
-          #         # Check if data exists and update or insert as needed
-          #         supabase.table('time_tracking').upsert({
-          #             'date': date,
-          #             'activity': activity,
-          #             'group': details['group'],
-          #             'duration': details['duration']
-          #         }).execute()
-          logging.info("Supabase update completed successfully")
+        for date, groups in data.items():
+            for group_name, activity_details in groups.items():
+                group_id = get_or_create_group(group_name)
+                
+                row = {
+                    'date': date,
+                    'group_id': group_id,
+                    'activity': activity_details['activity'],
+                    'duration': activity_details['duration']
+                }
+                
+                existing = supabase.table('time_tracking').select('*').eq('date', date).eq('activity', activity_details['activity']).execute()
+                
+                if existing.data:
+                    supabase.table('time_tracking').update(row).eq('date', date).eq('activity', activity_details['activity']).execute()
+                    logging.info(f"Updated record: {date} - {activity_details['activity']}")
+                else:
+                    supabase.table('time_tracking').insert(row).execute()
+                    logging.info(f"Inserted new record: {date} - {activity_details['activity']}")
+        
+        logging.info("Supabase update completed successfully")
     except Exception as e:
         logging.error(f"Error updating Supabase: {str(e)}")
+        raise
 
 def main():
     logging.info("Starting Daily Tracker Updater")

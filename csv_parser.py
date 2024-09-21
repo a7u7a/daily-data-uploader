@@ -17,7 +17,6 @@ def parse_daily_tracker_csv(file_path):
         headers[0] = 'Activity'
         headers[1] = 'Group'
         
-        
         # Parse dates
         dates = [datetime.strptime(date, '%d-%m-%y') for date in headers[2:]]
         
