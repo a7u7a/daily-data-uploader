@@ -2,21 +2,21 @@ import os
 import shutil
 import logging
 from datetime import datetime
-from csv_parser import parse_daily_tracker_csv
-from supabase import create_client, Client
+from csv_parser import parse_daily_data_csv
+from supabase import create_client, Client, ClientOptions
 
-EXPORT_DIR = os.getenv('DAILY_TRACKER_EXPORT_DIR')
+EXPORT_DIR = os.getenv('DAILY_UPLOADER_EXPORT_DIR')
 PROCESSED_DIR = os.path.join(EXPORT_DIR, 'processed')
 LAST_UPDATE_FILE = os.path.join(EXPORT_DIR, "last_update.txt")
-LOG_DIR = os.getenv('DAILY_TRACKER_LOG_DIR')
+LOG_DIR = os.getenv('DAILY_UPLOADER_LOG_DIR')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 USER_EMAIL = os.getenv('SUPABASE_USER_EMAIL')
 USER_PASSWORD = os.getenv('SUPABASE_USER_PASSWORD')
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(auto_refresh_token=False))
 
-required_vars = ['DAILY_TRACKER_EXPORT_DIR', 'DAILY_TRACKER_LOG_DIR','SUPABASE_URL','SUPABASE_KEY','SUPABASE_USER_EMAIL','SUPABASE_USER_PASSWORD']
+required_vars = ['DAILY_UPLOADER_EXPORT_DIR', 'DAILY_UPLOADER_LOG_DIR','SUPABASE_URL','SUPABASE_KEY','SUPABASE_USER_EMAIL','SUPABASE_USER_PASSWORD']
 missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars:
     raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
@@ -63,7 +63,7 @@ def process_file(filename):
     file_path = os.path.join(EXPORT_DIR, filename)
     logging.info(f"Processing file: {filename}")
     try:
-        data = parse_daily_tracker_csv(file_path)
+        data = parse_daily_data_csv(file_path)
         update_supabase(data)
         shutil.move(file_path, os.path.join(PROCESSED_DIR, filename))
         logging.info(f"Successfully processed and moved file: {filename}")
@@ -131,24 +131,25 @@ def update_supabase(data):
         raise
 
 def main():
-    logging.info("Starting Daily Tracker Updater")
+    logging.info("Starting Daily Uploader Updater")
     try:
-      last_update = get_last_update_time()
-      logging.info(f"Last update time: {last_update}")
-      new_files = get_new_csv_files()
-      logging.info(f"Found {len(new_files)} new CSV files")
-      
-      for file in new_files:
-        file_path = os.path.join(EXPORT_DIR, file)
-        file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-        if file_mod_time > last_update:
-            process_file(file) 
-            last_update = file_mod_time
-            
+        last_update = get_last_update_time()
+        logging.info(f"Last update time: {last_update}")
+        new_files = get_new_csv_files()
+        logging.info(f"Found {len(new_files)} new CSV files")
+        for file in new_files:
+            file_path = os.path.join(EXPORT_DIR, file)
+            file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+            if file_mod_time > last_update:
+                process_file(file) 
+                last_update = file_mod_time
+                
         logging.info(f"Update completed. New last update time: {last_update}")        
         set_last_update_time(last_update)
     except Exception as e:
-      logging.error(f"An unexpected error occurred: {str(e)}")
+        logging.error(f"An unexpected error occurred: {str(e)}")
+    finally:
+        logging.info("Daily Updater finished. Exiting.")
 
 if __name__ == "__main__":
     main()

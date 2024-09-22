@@ -161,5 +161,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-run-daily-tracker.sh
+run-daily-uploader.sh
 /daily-tracker-env
+/daily-uploader-env

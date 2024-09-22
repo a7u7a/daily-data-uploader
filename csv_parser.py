@@ -2,7 +2,7 @@ import csv
 from datetime import datetime
 from collections import defaultdict
 
-def parse_daily_tracker_csv(file_path):
+def parse_daily_data_csv(file_path):
     data = defaultdict(lambda: defaultdict(dict))
     
     with open(file_path, 'r') as csvfile:
