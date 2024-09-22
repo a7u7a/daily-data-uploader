@@ -11,10 +11,12 @@ LAST_UPDATE_FILE = os.path.join(EXPORT_DIR, "last_update.txt")
 LOG_DIR = os.getenv('DAILY_TRACKER_LOG_DIR')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+USER_EMAIL = os.getenv('SUPABASE_USER_EMAIL')
+USER_PASSWORD = os.getenv('SUPABASE_USER_PASSWORD')
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-required_vars = ['DAILY_TRACKER_EXPORT_DIR', 'DAILY_TRACKER_LOG_DIR']
+required_vars = ['DAILY_TRACKER_EXPORT_DIR', 'DAILY_TRACKER_LOG_DIR','SUPABASE_URL','SUPABASE_KEY','SUPABASE_USER_EMAIL','SUPABASE_USER_PASSWORD']
 missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars:
     raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
@@ -28,6 +30,18 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+def sign_in_user():
+    try:
+        response = supabase.auth.sign_in_with_password({
+            "email": USER_EMAIL,
+            "password": USER_PASSWORD
+        })
+        return response.user.id
+    except Exception as e:
+        logging.error(f"Error signing in: {str(e)}")
+        raise
+
 def get_last_update_time():
         if os.path.exists(LAST_UPDATE_FILE):
             with open(LAST_UPDATE_FILE, 'r') as f:
@@ -55,39 +69,62 @@ def process_file(filename):
         logging.info(f"Successfully processed and moved file: {filename}")
     except Exception as e:
         logging.error(f"Error processing file {filename}: {str(e)}")
+    
+def get_or_create_groups(group_names, user_id):
+    existing_groups = supabase.table('groups').select('id', 'name').eq('user_id', user_id).execute()
+    existing_groups_dict = {group['name']: group['id'] for group in existing_groups.data}
 
-def get_or_create_group(group_name):
-    result = supabase.table('groups').select('id').eq('name', group_name).execute()
-    if result.data:
-        return result.data[0]['id']
-    else:
-        result = supabase.table('groups').insert({'name': group_name}).execute()
-        return result.data[0]['id']
+    groups_to_create = [{'name': name, 'user_id': user_id} for name in group_names if name not in existing_groups_dict]
 
+    if groups_to_create:
+        new_groups = supabase.table('groups').insert(groups_to_create).execute()
+        for group in new_groups.data:
+            existing_groups_dict[group['name']] = group['id']
 
+    return existing_groups_dict
+
+    # Bulk update
 def update_supabase(data):
     logging.info("Updating Supabase")
     try:
+        user_id = sign_in_user()
+        if not user_id:
+            raise Exception("Failed to authenticate user")
+
+        all_group_names = set(group_name for groups in data.values() for group_name in groups.keys())
+
+        group_id_map = get_or_create_groups(all_group_names, user_id)
+
+        records_to_insert = []
+        records_to_update = []
+
+        existing_records = supabase.table('time_tracking').select('id', 'date', 'activity').eq('user_id', user_id).execute()
+        existing_records_dict = {(record['date'], record['activity']): record['id'] for record in existing_records.data}
+
         for date, groups in data.items():
             for group_name, activity_details in groups.items():
-                group_id = get_or_create_group(group_name)
-                
-                row = {
+                record = {
                     'date': date,
-                    'group_id': group_id,
+                    'group_id': group_id_map[group_name],
                     'activity': activity_details['activity'],
-                    'duration': activity_details['duration']
+                    'duration': activity_details['duration'],
+                    'user_id': user_id
                 }
-                
-                existing = supabase.table('time_tracking').select('*').eq('date', date).eq('activity', activity_details['activity']).execute()
-                
-                if existing.data:
-                    supabase.table('time_tracking').update(row).eq('date', date).eq('activity', activity_details['activity']).execute()
-                    logging.info(f"Updated record: {date} - {activity_details['activity']}")
+
+                if (date, activity_details['activity']) in existing_records_dict:
+                    record['id'] = existing_records_dict[(date, activity_details['activity'])]
+                    records_to_update.append(record)
                 else:
-                    supabase.table('time_tracking').insert(row).execute()
-                    logging.info(f"Inserted new record: {date} - {activity_details['activity']}")
-        
+                    records_to_insert.append(record)
+
+        if records_to_insert:
+            supabase.table('time_tracking').insert(records_to_insert).execute()
+            logging.info(f"Inserted {len(records_to_insert)} new records")
+
+        if records_to_update:
+            supabase.table('time_tracking').upsert(records_to_update).execute()
+            logging.info(f"Updated {len(records_to_update)} existing records")
+
         logging.info("Supabase update completed successfully")
     except Exception as e:
         logging.error(f"Error updating Supabase: {str(e)}")
@@ -102,14 +139,14 @@ def main():
       logging.info(f"Found {len(new_files)} new CSV files")
       
       for file in new_files:
-          file_path = os.path.join(EXPORT_DIR, file)
-          file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
-          if file_mod_time > last_update:
-              process_file(file)
-              last_update = file_mod_time
-      
-      set_last_update_time(last_update)
-      logging.info(f"Update completed. New last update time: {last_update}")
+        file_path = os.path.join(EXPORT_DIR, file)
+        file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+        if file_mod_time > last_update:
+            process_file(file) 
+            last_update = file_mod_time
+            
+        logging.info(f"Update completed. New last update time: {last_update}")        
+        set_last_update_time(last_update)
     except Exception as e:
       logging.error(f"An unexpected error occurred: {str(e)}")
 
