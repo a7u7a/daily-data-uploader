@@ -1,6 +1,6 @@
 # daily-data-uploader
 
-Upload data exported by [Daily Time Tracker](https://dailytimetracking.com/) to a Supabase project.
+Upload data exported by [Daily Time Tracker](https://dailytimetracking.com/) to Supabase.
 
 ## How I run this
 
@@ -22,3 +22,15 @@ deactivate
 ```
 
 - Register in chron job: To-Do
+
+## How it works
+
+- The script depends that you to manually export the data from Daily to a specific path `DAILY_TRACKER_EXPORT_DIR`.
+- You can automate this by [writing your own Apple Script](https://dailytimetracking.com/support#faq-applescript-export) and save the files to the above path. I havent tried this. I haven't tried this approach yet.
+- The script will run every n minutes and check for new files.
+
+## How to export data from Daily
+
+- The script expects the csv file to be exported using the following settings.
+- You can select any time range.
+- ![How to export](./docs/export.jpg)
